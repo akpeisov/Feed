@@ -1,0 +1,6 @@
+{
+	"speed": 1000,
+	"stepFwd": 19,
+	"stepRev": 12,
+	"stepCnt": 100
+}

@@ -1,0 +1,67 @@
+#include <stdio.h>
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "esp_timer.h"
+
+#define STEP_PIN GPIO_NUM_2
+#define DIR_PIN GPIO_NUM_4
+
+#define STEPS_PER_REVOLUTION 200 // количество шагов на один оборот
+
+QueueHandle_t stepQueue;
+
+static void IRAM_ATTR timer_isr(void* arg)
+{
+    gpio_set_level(STEP_PIN, 1);
+    gpio_set_level(STEP_PIN, 0);
+    xQueueSendFromISR(stepQueue, &arg, NULL);
+}
+
+void stepForward(int numSteps, int delayTime) {
+    gpio_set_level(DIR_PIN, 1); // Установите направление движения вперед
+    for(int i = 0; i < numSteps; i++) {
+        vTaskDelay(delayTime / portTICK_PERIOD_MS);
+        gpio_set_level(STEP_PIN, 1);
+        vTaskDelay(delayTime / portTICK_PERIOD_MS);
+        gpio_set_level(STEP_PIN, 0);
+    }
+}
+
+void stepReverse(int numSteps, int delayTime) {
+    gpio_set_level(DIR_PIN, 0); // Установите направление движения назад
+    for(int i = 0; i < numSteps; i++) {
+        vTaskDelay(delayTime / portTICK_PERIOD_MS);
+        gpio_set_level(STEP_PIN, 1);
+        vTaskDelay(delayTime / portTICK_PERIOD_MS);
+        gpio_set_level(STEP_PIN, 0);
+    }
+}
+
+void app_main(void) {
+    gpio_pad_select_gpio(STEP_PIN);
+    gpio_pad_select_gpio(DIR_PIN);
+    gpio_set_direction(STEP_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_direction(DIR_PIN, GPIO_MODE_OUTPUT);
+
+    stepQueue = xQueueCreate(10, sizeof(uint32_t));
+
+    esp_timer_init();
+
+    esp_timer_create_args_t timer_args = {
+        .callback = &timer_isr,
+        .arg = NULL
+    };
+
+    esp_timer_handle_t timer_handle;
+    esp_timer_create(&timer_args, &timer_handle);
+    esp_timer_start_periodic(timer_handle, 1000); // 1000 микросекунд (1 миллисекунда) между шагами
+
+    int numSteps = 400; // Количество шагов для выполнения
+    int delayTime = 2; // Задержка между шагами в миллисекундах
+
+    stepForward(numSteps, delayTime);
+    vTaskDelay(1000 / portTICK_PERIOD_MS); // Пауза 1 секунда
+    stepReverse(numSteps, delayTime);
+}
