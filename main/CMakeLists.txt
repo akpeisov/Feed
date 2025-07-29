@@ -9,5 +9,6 @@ idf_component_register(SRCS "main.c"
                             "ftp.c"
                             "mqtt.c"           
                             "udp_logging.c"
+                            "temperature.c"
                        INCLUDE_DIRS ".")
 

@@ -13,13 +13,12 @@
 #include "webServer.h"
 #include "ftp.h"
 #include "mqtt.h"
+#include "temperature.h"
 
 static const char *TAG = "MAIN";
 
 void app_main(void)
 {
-    initStepper();    
-
     if (initStorage() != ESP_OK) {
         return;
     }
@@ -33,10 +32,14 @@ void app_main(void)
     //     ESP_LOGE(TAG, "Can't init config!");
     //     return;
     // }
+    
     initServiceTask();
     initNetwork();    
     initWebServer();
-    // initFTP();    
+    initTemperature();
+    initADC();
+    initWater();
+    initFTP();    
 }
 
 

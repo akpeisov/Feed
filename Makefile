@@ -3,6 +3,6 @@
 # project subdirectory.
 #
 
-PROJECT_NAME := feed
+PROJECT_NAME := water
 
 include $(IDF_PATH)/make/project.mk

@@ -17,6 +17,8 @@ bool isReboot();
 SemaphoreHandle_t getSemaphore();
 esp_err_t createSemaphore();
 
-void initStepper();
-void setFeedFlag(char *params);
 void initServiceTask();
+void setTemperature(char* adr, float value);
+void initWater();
+void initADC();
+void initScheduler();

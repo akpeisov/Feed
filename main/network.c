@@ -12,7 +12,7 @@
 #include "driver/gpio.h"
 #include "udp_logging.h"
 #include "mqtt.h"
-#include "ftp.h"
+#include "esp_smartconfig.h"
 
 #define AP_SSID "HomeIO"
 #define AP_PASS "12345678"
@@ -29,9 +29,47 @@ static esp_netif_t *netif = NULL;
 uint32_t ownAddr;
 void sntpInit();
 bool networkInited = false;
+wifi_config_t wifi_config;
+char ethIP[16] = "0.0.0.0", wifiIP[16] = "0.0.0.0";
 
 uint32_t getOwnAddr() {
     return ownAddr;
+}
+
+char *getETHIPStr() {
+    char *res = malloc(16);    
+    strcpy(res, ethIP);    
+    return res;
+}
+
+char *getWIFIIPStr() {
+    char *res = malloc(16);    
+    strcpy(res, wifiIP);
+    return res;
+}
+
+char *getIPStr() {
+    char *res = malloc(40);
+
+    if (ethIP[0] != '0') {
+        strcat(res, "ETH ");
+        strcat(res, ethIP);
+    }
+
+    if ((ethIP[0] != '0') && (wifiIP[0] != '0')) {
+        strcat(res, " ");
+    }
+
+    if (wifiIP[0] != '0') {      
+        strcat(res, "WIFI ");
+        strcat(res, wifiIP);
+    }
+
+    if ((ethIP[0] == '0') && (wifiIP[0] == '0')) {
+        strcpy(res, "No network");
+    }
+
+    return res;
 }
 
 void networkEvent(bool ready) {
@@ -42,12 +80,13 @@ void networkEvent(bool ready) {
             // run once
             sntpInit();            
             initMQTT();
-            // initScheduler();
+            initScheduler();
         }
         if (getNetworkConfigValueBool2("rlog", "enabled")) {
-                udp_logging_init(getNetworkConfigValueString2("rlog", "server"),
-                                 getNetworkConfigValueInt2("rlog", "port"), 
-                                 udp_logging_vprintf);
+            ESP_LOGI(TAG, "Running rlog");
+            udp_logging_init(getNetworkConfigValueString2("rlog", "server"),
+                             getNetworkConfigValueInt2("rlog", "port"), 
+                             udp_logging_vprintf);
         }
     } else {
         ESP_LOGE(TAG, "Network down");
@@ -72,12 +111,14 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         case ETHERNET_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "Ethernet Link Down");
             networkEvent(false);
+            ethIP[0] = '-';
             break;
         case ETHERNET_EVENT_START:
             ESP_LOGI(TAG, "Ethernet Started");        
             break;
         case ETHERNET_EVENT_STOP:
             ESP_LOGI(TAG, "Ethernet Stopped");
+            ethIP[0] = '-';
             break;
         default:
             ESP_LOGW(TAG, "Unknown event_id %d from ethernet", event_id);
@@ -99,8 +140,7 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "~~~~~~~~~~~");
     ownAddr = ip_info->ip.addr;    
-    // ESP_LOGI(TAG, "address %zu, 0x%08x", ownAddr, ownAddr);
-    // ESP_LOGW(TAG, "a1 %d, %d, %d, %d", (ownAddr>>24)&0xFF, (ownAddr>>16)&0xFF, (ownAddr>>8)&0xFF, (ownAddr)&0xFF );
+    sprintf(ethIP, IPSTR, IP2STR(&ip_info->ip));
     networkReady = true;
     networkEvent(true);    
 }
@@ -114,12 +154,6 @@ bool isWifiEnabled() {
 
 esp_err_t initEth() {
     static esp_netif_t *eth_netif;
-    // gpio_pad_select_gpio(0);
-    // gpio_set_direction(0, GPIO_MODE_OUTPUT);    
-    // gpio_set_level(0, 0);
-    // esp_rom_delay_us(200); // insert min input assert time
-    // gpio_set_level(0, 1);
-
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     eth_netif = esp_netif_new(&cfg);   
     netif = eth_netif; 
@@ -136,12 +170,12 @@ esp_err_t initEth() {
     //phy_config.reset_gpio_num = 0;//CONFIG_EXAMPLE_ETH_PHY_RST_GPIO;
     // сделал для Миши, т.к. не грузится контроллер с етх, почему-то иногда впадает в режим загрузки.
     // ножку резета отрезаю и перекидываю на gpio14 (SD_CLK). 
-    // если нет значения в ethResetGpio то вернет 0, что как раз соответствует остальным платам.    
-    //phy_config.reset_gpio_num = getNetworkConfigValueInt2("eth", "resetGPIO"); // TODO : uncomment and fix
-    phy_config.reset_gpio_num = -1;
-    phy_config.reset_timeout_ms = 500;
-    mac_config.smi_mdc_gpio_num = 23; //CONFIG_EXAMPLE_ETH_MDC_GPIO;
-    mac_config.smi_mdio_gpio_num = 18; //CONFIG_EXAMPLE_ETH_MDIO_GPIO;
+    // если нет значения в ethResetGpio то вернет 0, что как раз соответствует остальным платам.
+    phy_config.reset_gpio_num = getNetworkConfigValueInt2("eth", "resetGPIO");
+    ESP_LOGI(TAG, "resetGPIO %d", getNetworkConfigValueInt2("eth", "resetGPIO"));
+    // phy_config.reset_timeout_ms = 500;
+    mac_config.smi_mdc_gpio_num = 23; 
+    mac_config.smi_mdio_gpio_num = 18;
     esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
     esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
@@ -156,6 +190,7 @@ esp_err_t initEth() {
     
     if (!getNetworkConfigValueBool2("eth", "dhcp")) {
         // static ip    
+        ESP_LOGI(TAG, "Set static IP %s", getNetworkConfigValueString2("eth", "ip"));
         esp_netif_ip_info_t ip_info;
         ipaddr_aton(getNetworkConfigValueString2("eth", "ip"), (ip_addr_t *)&ip_info.ip);
         ipaddr_aton(getNetworkConfigValueString2("eth", "netmask"), (ip_addr_t *)&ip_info.netmask);
@@ -170,43 +205,35 @@ esp_err_t initEth() {
             ESP_LOGI(TAG, "Stopping dhcp client");
             ESP_ERROR_CHECK(esp_netif_dhcpc_stop(eth_netif));
         }
-        // vTaskDelay(3000 / portTICK_RATE_MS); // TODO : what is this???
         esp_netif_set_ip_info(eth_netif, &ip_info);
         esp_netif_set_dns_info(eth_netif, ESP_NETIF_DNS_MAIN, &dns);
     }
     ESP_LOGI(TAG, "Starting eth");
-    //ESP_ERROR_CHECK(esp_eth_start(eth_handle));
     return esp_eth_start(eth_handle);
 }
 
 static void sta_event_handler(void* arg, esp_event_base_t event_base,
-                                int32_t event_id, void* event_data)
-{
+                                int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        networkEvent(false);    
-        esp_wifi_connect();        
-        ESP_LOGI(TAG, "trying to connect to the AP...");
-        // if (s_retry_num < 10) {
-        //     esp_wifi_connect();
-        //     s_retry_num++;
-        //     ESP_LOGI(TAG, "retry to connect to the AP");
-        // } else {
-        //     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        // }
-        // ESP_LOGI(TAG,"connect to the AP fail");
+        esp_wifi_connect();
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        ESP_LOGI(TAG, "WIFI_EVENT_STA_DISCONNECTED. Trying to connect to the AP %s with password %s", wifi_config.sta.ssid, wifi_config.sta.password);        
+        wifiIP[0] = '-';
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        // s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));        
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
+        ESP_LOGI(TAG, "Scan done");
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_FOUND_CHANNEL) {
+        ESP_LOGI(TAG, "Found channel");
     }
 }
 
 static void wifi_got_ip_event_handler(void *arg, esp_event_base_t event_base,
-                                 int32_t event_id, void *event_data)
-{
+                                 int32_t event_id, void *event_data) {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
     const esp_netif_ip_info_t *ip_info = &event->ip_info;
 
@@ -216,10 +243,10 @@ static void wifi_got_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "WIFI MASK:" IPSTR, IP2STR(&ip_info->netmask));
     ESP_LOGI(TAG, "WIFI GW:" IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "~~~~~~~~~~~");
-    ownAddr = ip_info->ip.addr;    
+    ownAddr = ip_info->ip.addr;  
+    sprintf(wifiIP, IPSTR, IP2STR(&ip_info->ip));  
     networkReady = true;
     networkEvent(true);
-    initFTP();    
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
@@ -236,7 +263,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void wifi_init_sta(void) {
+esp_err_t wifi_init_sta(void) {
+    if (getNetworkConfigValueString2("wifi", "ssid") == NULL) {
+        ESP_LOGE(TAG, "No SSID present. Changing to AP mode");
+        return ESP_FAIL;
+    }
     s_wifi_event_group = xEventGroupCreate();
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     netif = sta_netif;
@@ -266,32 +297,26 @@ void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &sta_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_got_ip_event_handler, NULL));
 
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = "",
-            .password = ""
-        },
-    };
     strcpy((char *)wifi_config.sta.ssid, getNetworkConfigValueString2("wifi", "ssid"));
     strcpy((char *)wifi_config.sta.password, getNetworkConfigValueString2("wifi", "pass"));
+
+    // strcpy((char *)wifi_config.sta.ssid, "Alana");
+    // strcpy((char *)wifi_config.sta.password, "zxcv1234");
+
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    // wifi_config.sta.threshold.rssi = -127;
+    // wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "wifi_init_sta finished. Waiting for WiFi connect to %s", getNetworkConfigValueString2("wifi", "ssid"));    
+    // ESP_LOGI(TAG, "wifi_init_sta finished. Waiting for WiFi connect to %s", getNetworkConfigValueString2("wifi", "ssid"));    
+    return ESP_OK;
 }
 
 void wifi_init_softap(void) {
-     esp_netif_t* wifiAP = esp_netif_create_default_wifi_ap();
-
-    esp_netif_ip_info_t ip_info;
-    esp_netif_ip_info_t ipInfo;
-    IP4_ADDR(&ipInfo.ip, 172,25,52,1);
-    IP4_ADDR(&ipInfo.gw, 172,25,52,1);
-    IP4_ADDR(&ipInfo.netmask, 255,255,255,0);
-    esp_netif_dhcps_stop(wifiAP);
-    esp_netif_set_ip_info(wifiAP, &ipInfo);
-    esp_netif_dhcps_start(wifiAP);
+    esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -329,20 +354,14 @@ void time_sync_notification_cb(struct timeval *tv) {
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "The current date/time is: %s", strftime_buf);
-    char str[100];
-    sprintf(str, "SNTP current time is %s", strftime_buf);    
+    //char str[100];
+    //sprintf(str, "SNTP current time is %s", strftime_buf);    
 }
 
 static void obtain_time(void) {
     // wait for time to be set
     time_t now = 0;
     struct tm timeinfo = { 0 };
-    //int retry = 0;
-    //const int retry_count = 10;
-    // while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
-    //     ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
-    //     vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // }
     time(&now);
     localtime_r(&now, &timeinfo);
 }
@@ -356,9 +375,6 @@ void sntpInit() {
     ESP_LOGI(TAG, "NTP server is %s", getNetworkConfigValueString("ntpserver"));
     sntp_setservername(0, getNetworkConfigValueString("ntpserver"));
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
-    // #ifdef CONFIG_SNTP_TIME_SYNC_METHOD_SMOOTH
-    //     sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
-    // #endif
     sntp_init();
 
     time_t now;
@@ -380,20 +396,22 @@ esp_err_t initNetwork() {
     ESP_ERROR_CHECK(esp_netif_init());        
     // Create default event loop that running in background
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    //ESP_LOGI(TAG, "After init net and loop event. Free heap size is %d", esp_get_free_heap_size());
-
+    bool wifiInited = false;
+    
     if (isEthEnabled()) {
+        //phyPower(false);
         initEth();    
         ESP_LOGI(TAG, "After init eth. Free heap size is %d", esp_get_free_heap_size());
     }
     // 
     if (isWifiEnabled()) {       
-        wifi_init_sta();
+        if (wifi_init_sta() == ESP_OK)            
+            wifiInited = true;
         ESP_LOGI(TAG, "After init wifi. Free heap size is %d", esp_get_free_heap_size());
     }    
     
     // если сеть не настроена, включаем точку доступа
-    if (!isEthEnabled() && !isWifiEnabled()) {
+    if (!isEthEnabled() && !isWifiEnabled() && !wifiInited) {
         wifi_init_softap();        
     }
     return ESP_OK;
@@ -406,4 +424,13 @@ esp_netif_t *getNetif(void)
 
 bool isNetworkReady() {
     return networkReady;
+}
+
+int8_t getRSSI() {           
+    wifi_ap_record_t wifidata;
+    esp_wifi_sta_get_ap_info(&wifidata);
+    if (wifidata.primary != 0) {
+        return wifidata.rssi;
+    }
+    return 127;
 }

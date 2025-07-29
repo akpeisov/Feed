@@ -1,0 +1,33 @@
+{    
+    "wifi": {
+        "enabled": true,
+        "ssid": "Alana",
+        "pass": "zxcv1234",
+        "dhcp": true        
+    },
+    "dns": "192.168.4.4",
+    "hostname": "Water",
+    "ntpserver": "pool.ntp.org",
+    "ntpTZ": "UTC-5:00",
+    "otaurl": "https://api.akpeisov.kz/water.bin",
+    "mqtt": {
+        "enabled": true,
+        "url": "mqtt://mqtt:mqtt1@192.168.4.2:1883"
+    },
+    "ftp": {
+        "enabled": true,
+        "user": "admin",
+        "pass": "admin1"
+    },
+    "rlog": {
+        "enabled": false,
+        "server": "192.168.4.2",
+        "port": 514
+    },
+    "adc": {
+        "delta": 10,
+        "min": 600,
+        "max": 2000,
+        "period": 5
+    }
+}

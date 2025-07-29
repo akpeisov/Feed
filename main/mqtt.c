@@ -48,13 +48,13 @@ void parseTopic(char* topic, char* data) {
         ESP_LOGI(TAG, "it's json");
         if (cJSON_IsBool(cJSON_GetObjectItem(jData, "feed")) && cJSON_IsTrue(cJSON_GetObjectItem(jData, "feed"))) {
             if (xSemaphoreTake(sem, portMAX_DELAY) == pdTRUE) {
-                setFeedFlag(data);
+//                setFeedFlag(data);
                 xSemaphoreGive(sem);
             }
         }
         cJSON_Delete(jData);
     } else if (strstr(topic, "/feed") && strstr(data, "ON")) {
-        setFeedFlag(NULL);
+        //setFeedFlag(NULL);
     }                         
 }
 
@@ -147,6 +147,13 @@ void mqttPublish(char* topic, char* data) {
         esp_mqtt_client_publish(mqttclient, topic, data, 0, 0, 0);    
 }
 
+void mqttPublishF(char* topic, float fdata) {
+    char data[10];
+    sprintf(data, "%.1f", fdata);
+    if (mqtt_connected)
+        esp_mqtt_client_publish(mqttclient, topic, data, 0, 0, 0);    
+}
+
 void mqtt_app_start(void)
 {
     if (!getNetworkConfigValueBool2("mqtt", "enabled")) {
@@ -157,6 +164,7 @@ void mqtt_app_start(void)
         .uri = "mqtt://"
     };
     mqtt_cfg.uri = getNetworkConfigValueString2("mqtt", "url");
+    mqtt_cfg.client_id = getNetworkConfigValueString("hostname");
     if (mqtt_cfg.uri == NULL) {
         ESP_LOGE(TAG, "No MQTT uri defined");
         return;
